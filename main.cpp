@@ -43,36 +43,39 @@ void setup() {
 }
 
 void loop() {
-  // Check if WiFi is connected, reconnect if not
-  if (WiFi.status() != WL_CONNECTED) {
+  // Non-blocking WiFi reconnect with backoff
+  static unsigned long lastReconnectAttempt = 0;
+  if (WiFi.status() != WL_CONNECTED && millis() - lastReconnectAttempt > 5000) {
     Serial.println("Reconnecting to WiFi...");
     WiFi.disconnect();
     WiFi.reconnect();
+    lastReconnectAttempt = millis();
   }
 
   WiFiClient client = server.available();
 
-  // Temp debug - print temp for sensor 0
-  float temperatureC = sensors.getTempCByIndex(0);
-  Serial.print(temperatureC);
-  Serial.println("ºC");
-
-  // Request temperature data from all sensors
-  sensors.requestTemperatures();
-  int deviceCount = sensors.getDeviceCount();  // Get the number of sensors on the bus
-  //Serial.printf("Found %d DS18B20 sensors\n", deviceCount);
-
   if (client) {
     Serial.println("New Client.");
-    String currentLine = "";
+    unsigned long timeout = millis() + 3000;  // 3s client timeout
+    char buf[256];
+    int bufPos = 0;
 
-    while (client.connected()) {
+    // Request temperature data from all sensors on client connect
+    sensors.requestTemperatures();
+    int deviceCount = sensors.getDeviceCount();
+
+    // Temp debug - print temp for sensor 0
+    float temperatureC = sensors.getTempCByIndex(0);
+    Serial.print(temperatureC);
+    Serial.println("ºC");
+
+    while (client.connected() && millis() < timeout) {
       if (client.available()) {
         char c = client.read();
         Serial.write(c);
 
         if (c == '\n') {
-          if (currentLine.length() == 0) { 
+          if (bufPos == 0) {
             // HTTP headers with JSON response
             client.println("HTTP/1.1 200 OK");
             client.println("Content-Type: application/json");
@@ -85,24 +88,28 @@ void loop() {
 
             // Loop through all sensors and get their temperatures
             for (int i = 0; i < deviceCount; i++) {
-              float temperatureC = sensors.getTempCByIndex(i);
+              float tempC = sensors.getTempCByIndex(i);
               if (i > 0) {
                 client.print(",");  // Add a comma between JSON objects
               }
-              client.printf("{\"sensor\":%d,\"temperature\":%.2f}", i, temperatureC);
-              Serial.printf("Sensor %d: %.2fºC\n", i, temperatureC);
+              client.printf("{\"sensor\":%d,\"temperature\":%.2f}", i, tempC);
+              Serial.printf("Sensor %d: %.2fºC\n", i, tempC);
             }
 
             // Close temperatures array
             client.print("]}");
 
             break;
-          } else {  // If newline, then clear currentLine
-            currentLine = "";
+          } else {  // If newline, then clear buffer
+            bufPos = 0;
           }
         } else if (c != '\r') {  // If anything else but a carriage return character
-          currentLine += c;     
+          if (bufPos < (int)sizeof(buf) - 1) {
+            buf[bufPos++] = c;
+          }
         }
+      } else {
+        delay(1);  // Yield to RTOS to avoid watchdog reset
       }
     }
     // Close the connection:

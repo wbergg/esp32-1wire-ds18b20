@@ -28,17 +28,26 @@ void setup() {
   Serial.print("Connecting to ");
   Serial.println(ssid);
 
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.begin(ssid, password);
 
-  while (WiFi.status() != WL_CONNECTED) {
+  // Wait for connection, but don't block boot forever — loop() will keep
+  // retrying via the reconnect logic if we time out here.
+  unsigned long connectTimeout = millis() + 15000;  // 15s
+  while (WiFi.status() != WL_CONNECTED && millis() < connectTimeout) {
     delay(500);
     Serial.print(".");
   }
 
   Serial.println("");
-  Serial.println("WiFi connected.");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("WiFi connected.");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi not connected — continuing, will retry in loop().");
+  }
   server.begin();
 }
 
@@ -79,6 +88,7 @@ void loop() {
             // HTTP headers with JSON response
             client.println("HTTP/1.1 200 OK");
             client.println("Content-Type: application/json");
+            client.println("Connection: close");
             client.println();
 
             // Start JSON object
